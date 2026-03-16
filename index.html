@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FBAR Filter Simulator — ScAlN</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { background: #0d1117; min-height: 100%; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<p style="text-align:center;color:#8b949e;font-size:10px;letter-spacing:1.2px;margin-bottom:8px">FBAR FILTER SIMULATOR — ScAlN PIEZOELECTRIC FILM</p>
+
+<div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-bottom:8px">
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px">
+      <p style="font-size:9px;color:#8b949e;letter-spacing:1px;margin:0 0 4px">RF FILTER FREQUENCY RESPONSE</p>
+      <canvas id="cf" height="215" style="width:100%;display:block"></canvas>
+      <div id="info" style="display:grid;grid-template-columns:1fr 1fr;margin-top:5px"></div>
+    </div>
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px">
+      <p style="font-size:9px;color:#8b949e;letter-spacing:1px;margin-bottom:3px">k<sub>t</sub><sup>2</sup> vs Sc CONCENTRATION</p>
+      <canvas id="ck" height="100" style="width:100%;display:block"></canvas>
+    </div>
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:7.5px;color:#8b949e;line-height:1.8">
+      <span style="color:#e3b341">BVD Model：</span>
+      Z=(f²−fp²+j·f·fp/Q)/(f²−fs²+j·f·fs/Q)<br>
+      T=|Z|/|Z+1| &nbsp;
+      <span style="color:#3fb950">fs→峰</span> &nbsp;
+      <span style="color:#f0883e">fp→谷</span>
+    </div>
+  </div>
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px">
+    <p style="font-size:9px;color:#8b949e;letter-spacing:1px;margin-bottom:2px">FBAR CROSS-SECTION — ACOUSTIC STANDING WAVE</p>
+    <canvas id="cw" height="450" style="width:100%;display:block"></canvas>
+    <div id="wmsg" style="font-size:9px;text-align:center;margin-top:4px;min-height:14px"></div>
+  </div>
+</div>
+
+<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px">
+  <div>
+    <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span style="color:#ff7b72">Input freq (GHz)</span><span id="lf" style="color:#ff7b72">10.81</span></div>
+    <input id="rf" type="range" min="7" max="15" step="0.01" value="10.81" style="width:100%;accent-color:#ff7b72">
+  </div>
+  <div>
+    <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span style="color:#39d0d8">Sc content x</span><span id="lx" style="color:#39d0d8">0.05</span></div>
+    <input id="rx" type="range" min="0" max="0.4" step="0.01" value="0.05" style="width:100%;accent-color:#39d0d8">
+  </div>
+  <div>
+    <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span style="color:#3fb950">Thickness t (nm)</span><span id="lt" style="color:#3fb950">500</span></div>
+    <input id="rt" type="range" min="200" max="1000" step="1" value="500" style="width:100%;accent-color:#3fb950">
+  </div>
+  <div>
+    <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:3px"><span style="color:#f0883e">Q factor</span><span id="lq" style="color:#f0883e">800</span></div>
+    <input id="rq" type="range" min="100" max="2000" step="10" value="800" style="width:100%;accent-color:#f0883e">
+  </div>
+</div>
+
+<script>
+var phase=0, X=0.05, TN=500, QQ=800, FIN=10.81;
+var XMIN=7, XMAX=15;
+
+function vSound(x){return 11000*(1-0.35*x);}
+function Kt2(x){return 0.06+0.25*x;}
+function Fs(v,t){return v/(2*t);}
+function Fp(fs,k){return fs/Math.sqrt(1-k);}
+function Bw(fs,k){return fs*k;}
+function lsp(a,b,n){var r=[];for(var i=0;i<n;i++)r.push(a+(b-a)*i/(n-1));return r;}
+function prep(id,h){var c=document.getElementById(id);c.width=c.parentNode.clientWidth-16;c.height=h;return c;}
+
+function calcT(fArr,fs,fp,Q){
+  return fArr.map(function(f){
+    if(f<=0)return 0;
+    var f2=f*f,fp2=fp*fp,fs2=fs*fs;
+    var nr=f2-fp2,ni=f*fp/Q,dr=f2-fs2,di=f*fs/Q;
+    var d2=dr*dr+di*di+1e-60;
+    var Zr=(nr*dr+ni*di)/d2,Zi=(ni*dr-nr*di)/d2;
+    var Tbr=Zr+1,Tbi=Zi,Tb2=Tbr*Tbr+Tbi*Tbi+1e-60;
+    var Tr=(Zr*Tbr+Zi*Tbi)/Tb2,Ti=(Zi*Tbr-Zr*Tbi)/Tb2;
+    return Math.min(1,Math.max(0,Math.sqrt(Tr*Tr+Ti*Ti)));
+  });
+}
+
+function matchStr(fIn,fs,bw){
+  var d=Math.abs(fIn-fs)/Math.max(bw/2,1e6);
+  return 1/(1+d*d*d*d);
+}
+
+function drawFilter(){
+  var c=prep('cf',215);
+  var ctx=c.getContext('2d');
+  var W=c.width,H=c.height;
+  var pl=42,pr=12,pt=34,pb=34;
+  var pw=W-pl-pr,ph=H-pt-pb;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#161b22';ctx.fillRect(0,0,W,H);
+
+  var v=vSound(X),k=Kt2(X),t=TN*1e-9;
+  var fs=Fs(v,t),fp=Fp(fs,k);
+  var fsG=fs*1e-9,fpG=fp*1e-9,bwG=fpG-fsG;
+  var fa=lsp(XMIN*1e9,XMAX*1e9,1200);
+  var T=calcT(fa,fs,fp,QQ);
+
+  function tx(g){return pl+(g-XMIN)/(XMAX-XMIN)*pw;}
+  function ty(v){return pt+ph*(1-Math.min(1,Math.max(0,v)));}
+  function freqIdx(fhz){return Math.max(0,Math.min(fa.length-1,Math.round((fhz-XMIN*1e9)/((XMAX-XMIN)*1e9)*(fa.length-1))));}
+
+  ctx.strokeStyle='#21262d';ctx.lineWidth=0.4;
+  [0,0.5,1.0].forEach(function(yv){
+    var yy=ty(yv);
+    ctx.beginPath();ctx.moveTo(pl,yy);ctx.lineTo(pl+pw,yy);ctx.stroke();
+    ctx.fillStyle='#8b949e';ctx.font='8px Courier New';ctx.textAlign='right';
+    ctx.fillText(yv.toFixed(1),pl-4,yy+3);
+  });
+  for(var xv=XMIN;xv<=XMAX;xv++){
+    var xx=tx(xv);
+    ctx.beginPath();ctx.moveTo(xx,pt);ctx.lineTo(xx,pt+ph);ctx.stroke();
+    ctx.fillStyle='#8b949e';ctx.font='8px Courier New';ctx.textAlign='center';
+    ctx.fillText(xv,xx,pt+ph+13);
+  }
+  ctx.fillStyle='#8b949e';ctx.font='8px Courier New';ctx.textAlign='center';
+  ctx.fillText('Frequency (GHz)',pl+pw/2,H-2);
+  ctx.save();ctx.translate(11,pt+ph/2);ctx.rotate(-1.5708);ctx.fillText('Transmission',0,0);ctx.restore();
+
+  var bx1=tx(fsG),bx2=tx(fpG),midX=(bx1+bx2)/2;
+  ctx.fillStyle='rgba(255,255,255,0.07)';ctx.fillRect(bx1,pt,bx2-bx1,ph);
+
+  ctx.setLineDash([5,4]);
+  ctx.strokeStyle='rgba(255,255,255,0.55)';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(bx1,pt);ctx.lineTo(bx1,pt+ph);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(bx2,pt);ctx.lineTo(bx2,pt+ph);ctx.stroke();
+  ctx.setLineDash([]);
+
+  var arrowY=ty(0.20);
+  ctx.strokeStyle='rgba(255,255,255,0.80)';ctx.lineWidth=1.2;
+  ctx.beginPath();ctx.moveTo(bx1,arrowY);ctx.lineTo(bx2,arrowY);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,0.80)';
+  ctx.beginPath();ctx.moveTo(bx1,arrowY);ctx.lineTo(bx1+9,arrowY-4);ctx.lineTo(bx1+9,arrowY+4);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(bx2,arrowY);ctx.lineTo(bx2-9,arrowY-4);ctx.lineTo(bx2-9,arrowY+4);ctx.closePath();ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.90)';ctx.font='8px Courier New';ctx.textAlign='center';
+  ctx.fillText('BW = '+bwG.toFixed(3)+' GHz',midX,arrowY+15);
+
+  var bkY=pt-16;
+  ctx.strokeStyle='rgba(255,255,255,0.45)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(bx1,bkY+6);ctx.lineTo(bx1,bkY);ctx.lineTo(bx2,bkY);ctx.lineTo(bx2,bkY+6);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,0.70)';ctx.font='7.5px Courier New';ctx.textAlign='center';
+  ctx.fillText('← BW '+bwG.toFixed(3)+' GHz →',midX,bkY-3);
+
+  var fsT=T[freqIdx(fs)];
+  ctx.fillStyle='#3fb950';ctx.strokeStyle='#0d1117';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(bx1,ty(fsT),5,0,6.283);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#3fb950';ctx.font='7px Courier New';ctx.textAlign='center';
+  ctx.fillText('fs '+fsG.toFixed(2)+'GHz',bx1,ty(fsT)-9);
+
+  var fpT=T[freqIdx(fp)];
+  ctx.fillStyle='#f0883e';ctx.strokeStyle='#0d1117';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(bx2,ty(fpT),5,0,6.283);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#f0883e';ctx.font='7px Courier New';ctx.textAlign='center';
+  ctx.fillText('fp '+fpG.toFixed(2)+'GHz',bx2,ty(fpT)+14);
+
+  if(FIN>=XMIN&&FIN<=XMAX){
+    ctx.strokeStyle='rgba(255,123,114,0.60)';ctx.lineWidth=1.3;
+    ctx.beginPath();ctx.moveTo(tx(FIN),pt);ctx.lineTo(tx(FIN),pt+ph);ctx.stroke();
+    ctx.fillStyle='#ff7b72';
+    ctx.beginPath();ctx.moveTo(tx(FIN)-4,pt+1);ctx.lineTo(tx(FIN)+4,pt+1);ctx.lineTo(tx(FIN),pt+10);ctx.closePath();ctx.fill();
+    var finT=T[freqIdx(FIN*1e9)];
+    ctx.fillStyle='#ff7b72';ctx.strokeStyle='#0d1117';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(tx(FIN),ty(finT),5,0,6.283);ctx.fill();ctx.stroke();
+    var lbx=tx(FIN)>pl+pw*0.75?tx(FIN)-56:tx(FIN)+7;
+    ctx.fillStyle='#ff7b72';ctx.font='8px Courier New';ctx.textAlign='left';
+    ctx.fillText('T='+(finT*100).toFixed(0)+'%',lbx,ty(finT)-5);
+  }
+
+  ctx.save();ctx.beginPath();
+  fa.forEach(function(f,i){i?ctx.lineTo(tx(f*1e-9),ty(T[i])):ctx.moveTo(tx(f*1e-9),ty(T[i]));});
+  ctx.lineTo(tx(XMAX),pt+ph);ctx.lineTo(tx(XMIN),pt+ph);ctx.closePath();
+  var grd=ctx.createLinearGradient(0,pt,0,pt+ph);
+  grd.addColorStop(0,'rgba(88,166,255,0.20)');grd.addColorStop(1,'rgba(88,166,255,0.01)');
+  ctx.fillStyle=grd;ctx.fill();ctx.restore();
+
+  ctx.strokeStyle='#58a6ff';ctx.lineWidth=2;
+  ctx.beginPath();fa.forEach(function(f,i){i?ctx.lineTo(tx(f*1e-9),ty(T[i])):ctx.moveTo(tx(f*1e-9),ty(T[i]));});ctx.stroke();
+  ctx.strokeStyle='#30363d';ctx.lineWidth=0.5;ctx.strokeRect(pl,pt,pw,ph);
+}
+
+function drawKt2(){
+  var c=prep('ck',100);var ctx=c.getContext('2d');var W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H);
+  var pl=38,pr=8,pt=6,pb=24;var pw=W-pl-pr,ph=H-pt-pb;
+  ctx.fillStyle='#161b22';ctx.fillRect(0,0,W,H);
+  function tx(v){return pl+v/0.4*pw;}
+  function ty(v){return pt+ph-(v-0.04)/0.13*ph;}
+  ctx.strokeStyle='#21262d';ctx.lineWidth=0.4;ctx.fillStyle='#8b949e';ctx.font='7px Courier New';
+  [0,0.2,0.4].forEach(function(xv){ctx.beginPath();ctx.moveTo(tx(xv),pt);ctx.lineTo(tx(xv),pt+ph);ctx.stroke();ctx.textAlign='center';ctx.fillText(xv.toFixed(1),tx(xv),pt+ph+12);});
+  [0.06,0.14].forEach(function(yv){ctx.beginPath();ctx.moveTo(pl,ty(yv));ctx.lineTo(pl+pw,ty(yv));ctx.stroke();ctx.textAlign='right';ctx.fillText(yv.toFixed(2),pl-3,ty(yv)+3);});
+  ctx.textAlign='center';ctx.fillText('Sc content x',pl+pw/2,H-2);
+  ctx.save();ctx.translate(10,pt+ph/2);ctx.rotate(-1.5708);ctx.fillText('kt²',0,0);ctx.restore();
+  var xa=lsp(0,0.4,200);
+  ctx.fillStyle='rgba(57,208,216,0.12)';ctx.beginPath();ctx.moveTo(tx(0),ty(0.04));xa.forEach(function(xi){ctx.lineTo(tx(xi),ty(Kt2(xi)));});ctx.lineTo(tx(0.4),ty(0.04));ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#39d0d8';ctx.lineWidth=1.6;ctx.beginPath();xa.forEach(function(xi,i){i?ctx.lineTo(tx(xi),ty(Kt2(xi))):ctx.moveTo(tx(xi),ty(Kt2(xi)));});ctx.stroke();
+  ctx.fillStyle='#e3b341';ctx.beginPath();ctx.arc(tx(X),ty(Kt2(X)),5,0,6.283);ctx.fill();ctx.strokeStyle='#0d1117';ctx.lineWidth=0.8;ctx.stroke();
+  ctx.strokeStyle='#30363d';ctx.lineWidth=0.5;ctx.strokeRect(pl,pt,pw,ph);
+}
+
+function drawWave(){
+  var c=prep('cw',450);var ctx=c.getContext('2d');var W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#161b22';ctx.fillRect(0,0,W,H);
+  var v=vSound(X),t=TN*1e-9,k=Kt2(X);
+  var fs=Fs(v,t),fp=Fp(fs,k),bw=Bw(fs,k);
+  var str=matchStr(FIN*1e9,fs,bw);
+  var lx=54,rx=W-22,lw=rx-lx;
+  var eH=24,airH=30,scH=H-20-eH*2-airH-34;
+  var tEy=10,scY=tEy+eH,bEy=scY+scH,airY=bEy+eH,subY=airY+airH,subH=H-subY-14;
+
+  ctx.fillStyle='#181828';ctx.fillRect(lx,subY,lw,subH);ctx.strokeStyle='#252535';ctx.lineWidth=0.8;ctx.strokeRect(lx,subY,lw,subH);
+  ctx.fillStyle='#666';ctx.font='9px Courier New';ctx.textAlign='center';ctx.fillText('Silicon Substrate (Si)',lx+lw/2,subY+subH/2+4);
+  ctx.fillStyle='#04080e';ctx.beginPath();ctx.moveTo(lx+lw*.1,airY);ctx.lineTo(lx+lw*.9,airY);ctx.lineTo(lx+lw*.8,subY);ctx.lineTo(lx+lw*.2,subY);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#1a2030';ctx.lineWidth=0.7;ctx.stroke();
+  ctx.fillStyle='#445';ctx.font='8px Courier New';ctx.textAlign='center';ctx.fillText('Air Cavity — Total Acoustic Reflection',lx+lw/2,airY+(subY-airY)/2+3);
+  ctx.fillStyle='#0c2848';ctx.fillRect(lx,bEy,lw,eH);ctx.strokeStyle='#1e4880';ctx.lineWidth=1;ctx.strokeRect(lx,bEy,lw,eH);
+  ctx.fillStyle='#5599cc';ctx.font='9px Courier New';ctx.textAlign='center';ctx.fillText('Mo — Bottom Electrode',lx+lw/2,bEy+eH/2+4);
+
+  for(var i=0;i<80;i++){
+    var z=i/80,u=str>0.02?Math.abs(Math.sin(Math.PI*z+phase))*str:0;
+    ctx.fillStyle='rgba('+(10+Math.round(u*190))+','+(100+Math.round(u*130))+','+(70+Math.round(u*110))+','+(0.2+u*0.6)+')';
+    ctx.fillRect(lx,scY+z*scH,lw,scH/80+1.5);
+  }
+  ctx.strokeStyle=str>0.3?'rgba(77,212,150,0.55)':'#21262d';ctx.lineWidth=1;ctx.strokeRect(lx,scY,lw,scH);
+
+  var cx=lx+lw/2,amp=lw*0.36*str;
+  if(str>0.02){
+    ctx.fillStyle='rgba(77,212,150,'+(0.05+str*0.1)+')';
+    ctx.beginPath();ctx.moveTo(cx,scY);
+    for(var i=0;i<=100;i++){var z=i/100;ctx.lineTo(cx+Math.sin(Math.PI*z+phase)*amp,scY+z*scH);}
+    ctx.lineTo(cx,scY+scH);ctx.closePath();ctx.fill();
+    var rr=Math.round(255*(1-str)),gg=Math.round(60+195*str);
+    ctx.strokeStyle='rgb('+rr+','+gg+',90)';ctx.lineWidth=2.5;
+    ctx.beginPath();
+    for(var i=0;i<=100;i++){var z=i/100,uu=Math.sin(Math.PI*z+phase)*amp;i?ctx.lineTo(cx+uu,scY+z*scH):ctx.moveTo(cx+uu,scY+z*scH);}
+    ctx.stroke();
+    ctx.strokeStyle='rgba(139,148,158,0.25)';ctx.lineWidth=0.6;ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(cx,scY);ctx.lineTo(cx,bEy);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#58a6ff';ctx.beginPath();ctx.arc(cx,scY,5,0,6.283);ctx.fill();
+    ctx.beginPath();ctx.arc(cx,bEy,5,0,6.283);ctx.fill();
+    var ay=scY+scH/2,ax=cx+Math.sin(Math.PI/2+phase)*amp;
+    ctx.fillStyle='#e3b341';ctx.beginPath();ctx.moveTo(ax,ay-7);ctx.lineTo(ax+7,ay);ctx.lineTo(ax,ay+7);ctx.lineTo(ax-7,ay);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='rgba(227,179,65,0.4)';ctx.lineWidth=0.8;ctx.setLineDash([2,3]);
+    ctx.beginPath();ctx.moveTo(lx-12,scY);ctx.lineTo(lx-12,bEy);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='rgba(227,179,65,0.75)';ctx.font='8px Courier New';
+    ctx.save();ctx.translate(lx-22,scY+scH/2);ctx.rotate(-1.5708);ctx.textAlign='center';ctx.fillText('λ/2',0,0);ctx.restore();
+  } else {
+    ctx.fillStyle='#0e1a12';ctx.fillRect(lx,scY,lw,scH);
+    ctx.fillStyle='#f0883e';ctx.font='11px Courier New';ctx.textAlign='center';
+    ctx.fillText('FREQUENCY MISMATCH',lx+lw/2,scY+scH/2-22);
+    ctx.font='9px Courier New';ctx.fillText('No Standing Wave Formed',lx+lw/2,scY+scH/2-5);
+    ctx.fillStyle='#666';ctx.font='8px Courier New';
+    ctx.fillText('Energy scattered — not confined',lx+lw/2,scY+scH/2+13);
+    ctx.fillText('Signal blocked',lx+lw/2,scY+scH/2+27);
+    for(var s=0;s<7;s++){
+      var sx=lx+lw*0.15+s*lw*0.12,sy=scY+scH*0.38,ang=(s-3)*0.38;
+      ctx.strokeStyle='rgba(240,136,62,0.4)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+Math.sin(ang)*28,sy-Math.cos(ang)*28);ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle=str>0.3?'#4dd496':str>0.05?'#e3b341':'#666';ctx.font='8.5px Courier New';ctx.textAlign='center';
+  ctx.fillText('ScAlN  x='+X.toFixed(2)+'  t='+TN+'nm  kt²='+Kt2(X).toFixed(3),lx+lw/2,scY+13);
+  ctx.fillStyle='#0c2848';ctx.fillRect(lx,tEy,lw,eH);ctx.strokeStyle='#1e4880';ctx.lineWidth=1;ctx.strokeRect(lx,tEy,lw,eH);
+  ctx.fillStyle='#5599cc';ctx.font='9px Courier New';ctx.textAlign='center';ctx.fillText('Mo — Top Electrode',lx+lw/2,tEy+eH/2+4);
+
+  var ax2=lx-16;
+  ctx.strokeStyle='#58a6ff';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(ax2-20,tEy+eH/2);ctx.lineTo(ax2,tEy+eH/2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ax2-7,tEy+eH/2-4);ctx.lineTo(ax2,tEy+eH/2);ctx.lineTo(ax2-7,tEy+eH/2+4);ctx.stroke();
+  ctx.fillStyle='#58a6ff';ctx.font='7px Courier New';ctx.textAlign='right';ctx.fillText('RF in',ax2-22,tEy+eH/2-3);
+  ctx.fillStyle='#ff7b72';ctx.fillText(FIN.toFixed(2)+' GHz',ax2-22,tEy+eH/2+8);
+  if(str>0.3){
+    ctx.strokeStyle='#3fb950';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(ax2,bEy+eH/2);ctx.lineTo(ax2-20,bEy+eH/2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(ax2-13,bEy+eH/2-4);ctx.lineTo(ax2-20,bEy+eH/2);ctx.lineTo(ax2-13,bEy+eH/2+4);ctx.stroke();
+    ctx.fillStyle='#3fb950';ctx.font='7px Courier New';ctx.textAlign='right';ctx.fillText('RF out ✓',ax2-22,bEy+eH/2+4);
+  } else {
+    ctx.fillStyle='#f0883e';ctx.font='7px Courier New';ctx.textAlign='right';ctx.fillText('Blocked ✗',ax2-4,bEy+eH/2+4);
+  }
+
+  ctx.fillStyle='#21262d';ctx.fillRect(lx,H-10,lw,8);
+  var r4=Math.round(255*(1-str)),g4=Math.round(50+205*str);
+  ctx.fillStyle='rgb('+r4+','+g4+',80)';ctx.fillRect(lx,H-10,lw*str,8);
+  ctx.strokeStyle='#30363d';ctx.lineWidth=0.5;ctx.strokeRect(lx,H-10,lw,8);
+  ctx.fillStyle='#8b949e';ctx.font='7px Courier New';ctx.textAlign='center';
+  ctx.fillText('Resonance strength: '+(str*100).toFixed(0)+'%',lx+lw/2,H-12);
+
+  var msg='';
+  if(str>0.8) msg='<span style="color:#3fb950">強共振 — 駐波鎖定 — RF 通過</span>';
+  else if(str>0.4) msg='<span style="color:#e3b341">部分共振 — 頻寬邊緣 — 訊號衰減</span>';
+  else if(str>0.1) msg='<span style="color:#f0883e">駐波微弱 — 脫離頻寬 — 大量衰減</span>';
+  else msg='<span style="color:#ff5555">頻率不對準 — 無駐波 — 訊號被擋</span>';
+  document.getElementById('wmsg').innerHTML=msg;
+}
+
+function drawInfo(){
+  var v=vSound(X),k=Kt2(X),t=TN*1e-9;
+  var fs=Fs(v,t),fp=Fp(fs,k);
+  var bwGHz=(fp-fs)*1e-9;
+  var str=matchStr(FIN*1e9,fs,(fp-fs));
+  var d=[
+    ['Sc conc.',X.toFixed(2)],['fs',(fs*1e-9).toFixed(3)+' GHz'],
+    ['Velocity',Math.round(vSound(X))+' m/s'],['fp',(fp*1e-9).toFixed(3)+' GHz'],
+    ['kt²',k.toFixed(4)],['BW',bwGHz.toFixed(3)+' GHz'],
+    ['fin',FIN.toFixed(2)+' GHz'],['Match',(str*100).toFixed(0)+'%']
+  ];
+  document.getElementById('info').innerHTML=d.map(function(r){
+    return '<div style="display:flex;justify-content:space-between;font-size:8px;padding:2px 0;border-bottom:.5px solid #21262d"><span style="color:#8b949e">'+r[0]+'</span><span>'+r[1]+'</span></div>';
+  }).join('');
+}
+
+function redraw(){drawFilter();drawKt2();drawInfo();}
+function tick(){
+  var v=vSound(X),t=TN*1e-9,k=Kt2(X);
+  var str=matchStr(FIN*1e9,Fs(v,t),Bw(Fs(v,t),k));
+  if(str>0.02) phase+=0.06*Math.max(str,0.2);
+  drawWave();
+  requestAnimationFrame(tick);
+}
+
+document.getElementById('rf').oninput=function(){FIN=+this.value;document.getElementById('lf').textContent=(+this.value).toFixed(2);redraw();};
+document.getElementById('rx').oninput=function(){X=+this.value;document.getElementById('lx').textContent=(+this.value).toFixed(2);redraw();};
+document.getElementById('rt').oninput=function(){TN=+this.value;document.getElementById('lt').textContent=Math.round(+this.value);redraw();};
+document.getElementById('rq').oninput=function(){QQ=+this.value;document.getElementById('lq').textContent=Math.round(+this.value);redraw();};
+window.onresize=redraw;
+setTimeout(function(){redraw();tick();},300);
+</script>
+
+</body>
+</html>
